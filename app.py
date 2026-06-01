@@ -27,25 +27,62 @@ if 'transacciones' not in st.session_state:
 if 'presupuestos' not in st.session_state:
     st.session_state.presupuestos = {cat: 500.0 for cat in CATEGORIAS_GASTO}
 
-# Motor NLP
-def procesar_texto_voz(texto):
+# ==========================================
+# MOTOR NLP AVANZADO (FECHA, VALOR, TIPO Y CATEGORÍA)
+# ==========================================
+def procesar_comando_voz_avanzado(texto):
     texto = texto.lower()
-    numeros = re.findall(r'\d+', texto)
-    monto_detectado = float(numeros[0]) if numeros else 0.0
+    hoy = datetime.date.today()
     
-    tipo_detectado = "Gasto"
-    if any(palabra in texto for palabra in ["ingreso", "recibi", "pago", "salario", "gane", "sueldo"]):
+    # 1. DETECCIÓN DE FECHA INTELIGENTE
+    fecha_detectada = hoy
+    
+    # Evaluar días relativos
+    if "ayer" in texto:
+        fecha_detectada = hoy - datetime.timedelta(days=1)
+    elif "antier" in texto or "antes de ayer" in texto:
+        fecha_detectada = hoy - datetime.timedelta(days=2)
+    elif "hace" in texto:
+        # Extraer cuántos días si dice "hace X dias"
+        dias_match = re.search(r'hace\s+(\d+)\s+días', texto)
+        if dias_match:
+            fecha_detectada = hoy - datetime.timedelta(days=int(dias_match.group(1)))
+            
+    # Evaluar días de la semana (Lógica retrospectiva: "el lunes" significa el lunes más reciente)
+    dias_semana = {
+        "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2, 
+        "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6
+    }
+    for dia, num_dia in dias_semana.items():
+        if f"el {dia}" in texto or f"del {dia}" in texto:
+            dias_atras = hoy.weekday() - num_dia
+            if dias_atras <= 0:  # Si fue en la semana anterior o es hoy
+                dias_atras += 7
+            fecha_detectada = hoy - datetime.timedelta(days=dias_atras)
+            break
+
+    # 2. DETECCIÓN DE TIPO (INGRESO / GASTO)
+    tipo_detectado = "Gasto"  # Por defecto
+    palabras_ingreso = ["ingreso", "recibi", "pago", "salario", "gane", "sueldo", "me depositaron", "comision", "ventas"]
+    if any(palabra in texto for palabra in palabras_ingreso):
         tipo_detectado = "Ingreso"
-        
+
+    # 3. DETECCIÓN DE VALOR (MONTO)
+    # Limpiar puntos de miles comunes en dictados (ej: "45.000" -> "45000")
+    texto_limpio = re.sub(r'(\d+)\.(\d{3})', r'\1\2', texto)
+    numeros = re.findall(r'\d+', texto_limpio)
+    monto_detectado = float(numeros[0]) if numeros else 0.0
+
+    # 4. CLASIFICACIÓN SEMÁNTICA DE CATEGORÍA
     categoria_detectada = "Otros"
     diccionario_semantico = {
-        "Alimentos": ["comida", "almuerzo", "restaurante", "mercado", "supermercado", "cena", "cafe", "hamburguesa"],
-        "Transporte": ["gasolina", "uber", "taxi", "bus", "peaje", "carro", "moto", "parqueadero"],
-        "Vivienda": ["arriendo", "alquiler", "hipoteca", "reparacion", "muebles"],
-        "Servicios Publicos": ["luz", "agua", "gas", "internet", "telefono", "celular", "servicios"],
-        "Entretenimiento": ["cine", "fiesta", "bar", "cerveza", "concierto", "viaje", "paseo", "suscripcion", "netflix"],
-        "Tecnologia": ["computador", "celular", "software", "pantalla", "audifonos", "gadget"],
-        "Educacion": ["curso", "universidad", "colegio", "libro", "matricula", "seminario"]
+        "Alimentos": ["comida", "almuerzo", "restaurante", "mercado", "supermercado", "cena", "cafe", "hamburguesa", "desayuno"],
+        "Transporte": ["gasolina", "uber", "taxi", "bus", "peaje", "carro", "moto", "parqueadero", "combustible"],
+        "Vivienda": ["arriendo", "alquiler", "hipoteca", "reparacion", "muebles", "reparación"],
+        "Servicios Publicos": ["luz", "agua", "gas", "internet", "telefono", "celular", "servicios", "netflix", "spotify"],
+        "Entretenimiento": ["cine", "fiesta", "bar", "cerveza", "concierto", "viaje", "paseo", "rumba", "discoteca"],
+        "Tecnologia": ["computador", "celular", "software", "pantalla", "audifonos", "gadget", "laptop"],
+        "Educacion": ["curso", "universidad", "colegio", "libro", "matricula", "seminario", "pensum"]
     }
     
     lista_analisis = CATEGORIAS_INGRESO if tipo_detectado == "Ingreso" else CATEGORIAS_GASTO
@@ -60,30 +97,34 @@ def procesar_texto_voz(texto):
         if "salario" in texto or "sueldo" in texto: categoria_detectada = "Salario"
         if "inversion" in texto: categoria_detectada = "Inversiones"
         
-    return tipo_detectado, categoria_detectada, monto_detectado
+    return fecha_detectada, tipo_detectado, categoria_detectada, monto_detectado
 
-# BARRA LATERAL
+# ==========================================
+# BARRA LATERAL: ENTRADA DE DATOS AI
+# ==========================================
 with st.sidebar:
     st.header("⚙️ Gestion de Activos")
     
     st.subheader("🎙️ Inteligencia de Voz AI")
-    st.markdown("<small>Si el botón en pantalla no reacciona por bloqueos de privacidad de tu navegador, usa el micrófono nativo de tu teclado.</small>", unsafe_allow_html=True)
+    st.markdown("<small>Dicta tu transacción indicando cuándo, qué y cuánto de manera fluida.</small>", unsafe_allow_html=True)
     
-    # Campo de entrada combinado (Soporta dictado de teclado directo sin problemas de iframe)
-    voice_input = st.text_input("Dictar o escribir transacción:", placeholder="Ej: Gaste 45000 en gasolina", key="voice_input_field")
+    voice_input = st.text_input("Dictar transacción:", placeholder="Ej: Ayer gasté 45000 en gasolina", key="voice_input_field")
     
     if voice_input:
-        tipo_v, cat_v, monto_v = procesar_texto_voz(voice_input)
-        st.warning(f"**Detectado:** {tipo_v} en *{cat_v}* por **${monto_v:,.0f}**")
+        fecha_v, tipo_v, cat_v, monto_v = procesar_comando_voz_avanzado(voice_input)
         
-        if st.button("Confirmar Registro de Voz", use_container_width=True):
+        # Panel Gerencial de Confirmación de Datos Extraídos
+        st.markdown("### Datos Extraídos:")
+        st.info(f"📅 **Fecha:** {fecha_v.strftime('%d/%m/%Y')}\n\n🔄 **Tipo:** {tipo_v}\n\n🏷️ **Categoría:** {cat_v}\n\n💵 **Monto:** ${monto_v:,.0f}")
+        
+        if st.button("Confirmar e Inyectar a Dashboard", use_container_width=True):
             if monto_v > 0:
-                nueva_f = pd.DataFrame([[datetime.date.today(), tipo_v, cat_v, voice_input, monto_v]], columns=st.session_state.transacciones.columns)
+                nueva_f = pd.DataFrame([[fecha_v, tipo_v, cat_v, voice_input, monto_v]], columns=st.session_state.transacciones.columns)
                 st.session_state.transacciones = pd.concat([st.session_state.transacciones, nueva_f], ignore_index=True)
-                st.success("Transacción indexada.")
+                st.success("Transacción indexada exitosamente.")
                 st.rerun()
             else:
-                st.error("No se detectó un monto numérico.")
+                st.error("No se detectó un monto numérico válido.")
 
     st.markdown("---")
     
