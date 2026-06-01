@@ -15,7 +15,6 @@ st.markdown("""
     <style>
     div[data-testid="stMetricValue"] { font-size: 2rem !important; font-weight: bold; }
     div[data-testid="stExpander"] { border-radius: 10px; margin-bottom: 15px; }
-    .voice-box { background-color: #2e3440; padding: 15px; border-radius: 10px; color: white; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -23,30 +22,22 @@ st.markdown("""
 CATEGORIAS_GASTO = ["Alimentos", "Transporte", "Vivienda", "Servicios Publicos", "Entretenimiento", "Tecnologia", "Educacion", "Otros"]
 CATEGORIAS_INGRESO = ["Salario", "Inversiones", "Freelance", "Otros Ingresos"]
 
-# Inicialización de estado
 if 'transacciones' not in st.session_state:
     st.session_state.transacciones = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Descripcion", "Monto"])
 if 'presupuestos' not in st.session_state:
     st.session_state.presupuestos = {cat: 500.0 for cat in CATEGORIAS_GASTO}
 
-# ==========================================
-# MOTOR NLP: PROCESAMIENTO DE VOZ A DATOS
-# ==========================================
+# Motor NLP
 def procesar_texto_voz(texto):
     texto = texto.lower()
-    
-    # 1. Extraer el primer número que encuentre (Monto)
     numeros = re.findall(r'\d+', texto)
     monto_detectado = float(numeros[0]) if numeros else 0.0
     
-    # 2. Determinar si es Ingreso o Gasto (por defecto Gasto)
     tipo_detectado = "Gasto"
     if any(palabra in texto for palabra in ["ingreso", "recibi", "pago", "salario", "gane", "sueldo"]):
         tipo_detectado = "Ingreso"
         
-    # 3. Clasificación Semántica por Categorías
     categoria_detectada = "Otros"
-    
     diccionario_semantico = {
         "Alimentos": ["comida", "almuerzo", "restaurante", "mercado", "supermercado", "cena", "cafe", "hamburguesa"],
         "Transporte": ["gasolina", "uber", "taxi", "bus", "peaje", "carro", "moto", "parqueadero"],
@@ -58,15 +49,12 @@ def procesar_texto_voz(texto):
     }
     
     lista_analisis = CATEGORIAS_INGRESO if tipo_detectado == "Ingreso" else CATEGORIAS_GASTO
-    
-    # Buscar coincidencias clave
     for cat_clave, palabras_asociadas in diccionario_semantico.items():
         if any(palabra in texto for palabra in palabras_asociadas):
             if cat_clave in lista_analisis:
                 categoria_detectada = cat_clave
                 break
                 
-    # Si es ingreso y no clasificó, asignar una por defecto
     if tipo_detectado == "Ingreso" and categoria_detectada == "Otros":
         categoria_detectada = "Otros Ingresos"
         if "salario" in texto or "sueldo" in texto: categoria_detectada = "Salario"
@@ -74,96 +62,32 @@ def procesar_texto_voz(texto):
         
     return tipo_detectado, categoria_detectada, monto_detectado
 
-# ==========================================
-# BARRA LATERAL: ENTRADA DE DATOS
-# ==========================================
+# BARRA LATERAL
 with st.sidebar:
     st.header("⚙️ Gestion de Activos")
     
-    # --- COMPONENTE DISRUPTIVO: COMANDO DE VOZ ---
-    st.subheader("🎙️ Registro por Voz AI")
-    st.markdown("<small>Presiona el botón e indica tu transacción de forma natural.</small>", unsafe_allow_html=True)
+    st.subheader("🎙️ Inteligencia de Voz AI")
+    st.markdown("<small>Si el botón en pantalla no reacciona por bloqueos de privacidad de tu navegador, usa el micrófono nativo de tu teclado.</small>", unsafe_allow_html=True)
     
-    # Inyección de JavaScript nativo para captura de micrófono en el navegador
-    from streamlit.components.v1 import html
-    my_html = """
-    <div style="text-align:center;">
-        <button id="start-btn" style="background-color:#e74c3c; color:white; border:none; padding:12px 20px; border-radius:8px; font-weight:bold; cursor:pointer; width:100%;">
-            🎤 Hablar Ahora
-        </button>
-        <p id="status" style="color:#888; font-size:12px; margin-top:5px;">Micrófono listo</p>
-    </div>
-
-    <script>
-        const btn = document.getElementById('start-btn');
-        const status = document.getElementById('status');
-        
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        
-        if (SpeechRecognition) {
-            const recognition = new SpeechRecognition();
-            recognition.lang = 'es-ES';
-            recognition.interimResults = false;
-            
-            btn.addEventListener('click', () => {
-                recognition.start();
-                btn.style.backgroundColor = '#2ecc71';
-                btn.innerText = '🔴 Escuchando...';
-                status.innerText = 'Habla ahora con claridad...';
-            });
-            
-            recognition.onspeechend = () => {
-                recognition.stop();
-                btn.style.backgroundColor = '#e74c3c';
-                btn.innerText = '🎤 Hablar Ahora';
-            };
-            
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                status.innerText = "Entendido: " + transcript;
-                
-                # Enviar el texto capturado de vuelta a Streamlit
-                window.parent.postMessage({
-                    type: 'streamlit:setComponentValue',
-                    value: transcript
-                }, '*');
-            };
-            
-            recognition.onerror = (event) => {
-                status.innerText = 'Error en reconocimiento: ' + event.error;
-                btn.style.backgroundColor = '#e74c3c';
-                btn.innerText = '🎤 Hablar Ahora';
-            };
-        } else {
-            status.innerText = 'Tu navegador no soporta comandos de voz. Usa Chrome o Safari.';
-            btn.disabled = true;
-        }
-    </script>
-    """
+    # Campo de entrada combinado (Soporta dictado de teclado directo sin problemas de iframe)
+    voice_input = st.text_input("Dictar o escribir transacción:", placeholder="Ej: Gaste 45000 en gasolina", key="voice_input_field")
     
-    # Capturar la salida del componente HTML
-    texto_escuchado = html(my_html, height=100)
-    
-    # Manejo del texto transcrito si el usuario habló
-    voice_input = st.text_input("Texto procesado por Voz:", key="voice_output_text")
-    
-    # Truco de sincronización para procesar el texto enviado por JS
     if voice_input:
         tipo_v, cat_v, monto_v = procesar_texto_voz(voice_input)
-        st.info(f"**Detectado:** {tipo_v} en *{cat_v}* por **${monto_v:,.0f}**")
+        st.warning(f"**Detectado:** {tipo_v} en *{cat_v}* por **${monto_v:,.0f}**")
         
-        if st.button("Confirmar Transaccion de Voz", use_container_width=True):
+        if st.button("Confirmar Registro de Voz", use_container_width=True):
             if monto_v > 0:
                 nueva_f = pd.DataFrame([[datetime.date.today(), tipo_v, cat_v, voice_input, monto_v]], columns=st.session_state.transacciones.columns)
                 st.session_state.transacciones = pd.concat([st.session_state.transacciones, nueva_f], ignore_index=True)
-                st.success("Transacción por voz indexada con éxito.")
+                st.success("Transacción indexada.")
                 st.rerun()
             else:
-                st.error("No se detectó un monto numérico válido en el audio.")
+                st.error("No se detectó un monto numérico.")
 
     st.markdown("---")
     
-    # --- REGISTRO MANUAL TRADICIONAL (RESPALDO) ---
+    # REGISTRO MANUAL DE RESPALDO
     with st.expander("➕ Registrar Manualmente"):
         tipo = st.radio("Tipo", ["Ingreso", "Gasto"])
         fecha = st.date_input("Fecha", datetime.date.today())
@@ -176,7 +100,7 @@ with st.sidebar:
             if monto > 0:
                 nueva_f = pd.DataFrame([[fecha, tipo, cat, desc, monto]], columns=st.session_state.transacciones.columns)
                 st.session_state.transacciones = pd.concat([st.session_state.transacciones, nueva_f], ignore_index=True)
-                st.success("Dato indexado correctamente")
+                st.success("Dato indexado")
                 st.rerun()
 
     with st.expander("🔧 Limites Presupuestarios"):
@@ -198,7 +122,7 @@ if not df.empty:
     df['Fecha'] = pd.to_datetime(df['Fecha']).dt.date
     df = df[(df['Fecha'] >= f_inicio) & (df['Fecha'] <= f_fin)]
 
-# --- KPIs ---
+# KPIs
 ing = df[df['Tipo'] == "Ingreso"]['Monto'].sum()
 gst = df[df['Tipo'] == "Gasto"]['Monto'].sum()
 bal = ing - gst
@@ -231,7 +155,7 @@ with col_g2:
     fig_comp.update_layout(title="Comparativa de Flujos", barmode='group', height=330, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig_comp, use_container_width=True)
 
-# --- CONTROL DE PRESUPUESTOS ---
+# CONTROL DE PRESUPUESTOS
 st.markdown("### Control de Desviaciones (Alertas)")
 cols_alert = st.columns(4)
 gastos_agrupados = df_gst.groupby('Categoria')['Monto'].sum().to_dict() if not df_gst.empty else {}
@@ -251,7 +175,7 @@ for i, cat in enumerate(CATEGORIAS_GASTO):
         else:
             st.caption(f":green[${spent:,.0f} de ${limit:,.0f} ({percent*100:.1f}%) - Controlado]")
 
-# --- DETALLE DE OPERACIONES ---
+# DETALLE DE OPERACIONES
 st.markdown("---")
 with st.expander("🔍 Auditoria de Movimientos"):
     if not df.empty:
