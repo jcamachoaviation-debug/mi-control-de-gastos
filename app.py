@@ -36,19 +36,15 @@ def procesar_comando_voz_avanzado(texto):
     
     # 1. DETECCIÓN DE FECHA INTELIGENTE
     fecha_detectada = hoy
-    
-    # Evaluar días relativos
     if "ayer" in texto:
         fecha_detectada = hoy - datetime.timedelta(days=1)
     elif "antier" in texto or "antes de ayer" in texto:
         fecha_detectada = hoy - datetime.timedelta(days=2)
     elif "hace" in texto:
-        # Extraer cuántos días si dice "hace X dias"
         dias_match = re.search(r'hace\s+(\d+)\s+días', texto)
         if dias_match:
             fecha_detectada = hoy - datetime.timedelta(days=int(dias_match.group(1)))
             
-    # Evaluar días de la semana (Lógica retrospectiva: "el lunes" significa el lunes más reciente)
     dias_semana = {
         "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2, 
         "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6
@@ -56,24 +52,23 @@ def procesar_comando_voz_avanzado(texto):
     for dia, num_dia in dias_semana.items():
         if f"el {dia}" in texto or f"del {dia}" in texto:
             dias_atras = hoy.weekday() - num_dia
-            if dias_atras <= 0:  # Si fue en la semana anterior o es hoy
+            if dias_atras <= 0:
                 dias_atras += 7
             fecha_detectada = hoy - datetime.timedelta(days=dias_atras)
             break
 
-    # 2. DETECCIÓN DE TIPO (INGRESO / GASTO)
-    tipo_detectado = "Gasto"  # Por defecto
+    # 2. DETECCIÓN DE TIPO
+    tipo_detectado = "Gasto"
     palabras_ingreso = ["ingreso", "recibi", "pago", "salario", "gane", "sueldo", "me depositaron", "comision", "ventas"]
     if any(palabra in texto for palabra in palabras_ingreso):
         tipo_detectado = "Ingreso"
 
-    # 3. DETECCIÓN DE VALOR (MONTO)
-    # Limpiar puntos de miles comunes en dictados (ej: "45.000" -> "45000")
+    # 3. DETECCIÓN DE VALOR
     texto_limpio = re.sub(r'(\d+)\.(\d{3})', r'\1\2', texto)
     numeros = re.findall(r'\d+', texto_limpio)
     monto_detectado = float(numeros[0]) if numeros else 0.0
 
-    # 4. CLASIFICACIÓN SEMÁNTICA DE CATEGORÍA
+    # 4. CLASIFICACIÓN SEMÁNTICA
     categoria_detectada = "Otros"
     diccionario_semantico = {
         "Alimentos": ["comida", "almuerzo", "restaurante", "mercado", "supermercado", "cena", "cafe", "hamburguesa", "desayuno"],
@@ -113,7 +108,6 @@ with st.sidebar:
     if voice_input:
         fecha_v, tipo_v, cat_v, monto_v = procesar_comando_voz_avanzado(voice_input)
         
-        # Panel Gerencial de Confirmación de Datos Extraídos
         st.markdown("### Datos Extraídos:")
         st.info(f"📅 **Fecha:** {fecha_v.strftime('%d/%m/%Y')}\n\n🔄 **Tipo:** {tipo_v}\n\n🏷️ **Categoría:** {cat_v}\n\n💵 **Monto:** ${monto_v:,.0f}")
         
@@ -174,14 +168,46 @@ m1.metric("Ingresos Totales", f"${ing:,.0f}")
 m2.metric("Gastos Totales", f"${gst:,.0f}")
 m3.metric("Flujo Neto", f"${bal:,.0f}", delta=f"{tasa_ahorro:.1f}% Tasa Ahorro")
 
-st.markdown("### Visualizacion de Resultados")
+# --- NUEVA SECCIÓN: ANÁLISIS DE TENDENCIA DIARIA ---
+st.markdown("### 📊 Analitica de Gastos Diarios por Rubro")
+df_gst = df[df['Tipo'] == "Gasto"] if not df.empty else pd.DataFrame()
+
+if not df_gst.empty:
+    # Agrupar datos por Fecha y Categoría para el gráfico cronológico
+    df_diario = df_gst.groupby(['Fecha', 'Categoria'])['Monto'].sum().reset_index()
+    # Asegurar orden cronológico para evitar desorden visual
+    df_diario = df_diario.sort_values(by="Fecha")
+    
+    # Construcción del gráfico de barras apiladas (Stacked Bar Chart)
+    fig_diario = px.bar(
+        df_diario, 
+        x='Fecha', 
+        y='Monto', 
+        color='Categoria',
+        title="Evolucion Cronologica del Gasto ($)",
+        labels={'Monto': 'Total Gastado ($)', 'Fecha': 'Dia de Operacion'},
+        color_discrete_sequence=px.colors.qualitative.Safe
+    )
+    
+    # Configuración gerencial: diseño limpio y interactivo
+    fig_diario.update_layout(
+        barmode='stack',
+        xaxis_tickformat='%d %b',
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+    st.plotly_chart(fig_diario, use_container_width=True)
+else:
+    st.info("Sin registros de gastos en el periodo seleccionado para generar la tendencia diaria.")
+
+st.markdown("### Visualizacion Estructural de Resultados")
 col_g1, col_g2 = st.columns(2)
 
 with col_g1:
-    df_gst = df[df['Tipo'] == "Gasto"]
     if not df_gst.empty:
         fig_donut = px.pie(df_gst, values='Monto', names='Categoria', hole=0.5, 
-                         title="Distribucion Gerencial de Gastos",
+                         title="Distribucion Consolidada de Gastos",
                          color_discrete_sequence=px.colors.qualitative.Safe)
         fig_donut.update_traces(textposition='inside', textinfo='percent+label')
         fig_donut.update_layout(margin=dict(t=40, b=40, l=20, r=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
@@ -193,7 +219,7 @@ with col_g2:
     fig_comp = go.Figure()
     fig_comp.add_trace(go.Bar(name='Ingresos', x=['Totales'], y=[ing], marker_color='#2ecc71'))
     fig_comp.add_trace(go.Bar(name='Gastos', x=['Totales'], y=[gst], marker_color='#e74c3c'))
-    fig_comp.update_layout(title="Comparativa de Flujos", barmode='group', height=330, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig_comp.update_layout(title="Comparativa Consolidada de Flujos", barmode='group', height=330, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig_comp, use_container_width=True)
 
 # CONTROL DE PRESUPUESTOS
